@@ -65,7 +65,11 @@ func main() {
 		os.Exit(1)
 	}
 	redisClient := redis.NewClient(redisOpt)
-	defer redisClient.Close()
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			logger.Error(ctx, "failed to close redis", slog.String("error", err.Error()))
+		}
+	}()
 
 	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pingCancel()
