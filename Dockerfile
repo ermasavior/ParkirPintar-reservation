@@ -5,7 +5,7 @@ RUN make build
 
 FROM alpine:3.18.2 AS alpine
 RUN apk update && \
-    apk add --no-cache ca-certificates tzdata && \
+    apk add --no-cache ca-certificates=20241121-r1 tzdata=2025b-r && \
     update-ca-certificates
 
 FROM alpine:3.18.2

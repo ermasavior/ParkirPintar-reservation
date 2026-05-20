@@ -19,11 +19,18 @@ mock:
 	$(MOCKGEN) \
 		-source=internal/reservation/repository/init.go \
 		-destination=$(MOCK_DIR)/reservation/mock_repository.go \
-		-package=mockreservation
+		-package=mockreservation \
+		-mock_names=Reservation=MockReservationRepository
 	$(MOCKGEN) \
 		-source=internal/reservation/usecase/init.go \
-		-destination=$(MOCK_DIR)/usecase/mock_usecase.go \
-		-package=mockusecase
+		-destination=$(MOCK_DIR)/reservation/mock_usecase.go \
+		-package=mockreservation \
+		-mock_names=Reservation=MockReservationUsecase
+	$(MOCKGEN) \
+		-source=pkg/paymentclient/client.go \
+		-destination=$(MOCK_DIR)/pkg/paymentclient/mock_paymentclient.go \
+		-package=mockpaymentclient \
+		-mock_names=PaymentService=MockPaymentService
 	@echo "Done."
 
 ## proto-install: install protoc-gen-go and protoc-gen-go-grpc plugins
@@ -56,10 +63,10 @@ mod-tidy:
 	go mod tidy
 
 run:
-	go run cmd/http/main.go
+	go run cmd/main.go
 
 build:
-	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/reservation cmd/http/main.go
+	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/reservation cmd/main.go
 
 check-cognitive-complexity:
 	find . -type f -name '*.go' -not -name "mock*.go" \

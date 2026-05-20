@@ -62,7 +62,6 @@ type SpotStatus int
 const (
 	SpotStatusAvailable SpotStatus = 1
 	SpotStatusLocked    SpotStatus = 2
-	SpotStatusOccupied  SpotStatus = 3
 )
 
 // CreateReservationRequest is the HTTP request body for creating a reservation
@@ -97,4 +96,16 @@ type GetReservationResponse struct {
 	ConfirmedAt    *time.Time        `json:"confirmed_at,omitempty"`
 	ExpiresAt      *time.Time        `json:"expires_at,omitempty"`
 	CreatedAt      time.Time         `json:"created_at"`
+}
+
+// NATSPaymentDoneEvent is the payload received from payment.booking.done
+type NATSPaymentDoneEvent struct {
+	ReferenceID string `json:"reference_id"` // reservation_id
+	Status      string `json:"status"`       // "SUCCESS" | "FAILED" | "EXPIRED"
+}
+
+// NATSReservationEvent is published after booking payment outcome
+type NATSReservationEvent struct {
+	ReservationID string `json:"reservation_id"`
+	DriverID      string `json:"driver_id"`
 }

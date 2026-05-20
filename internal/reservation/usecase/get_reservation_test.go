@@ -22,7 +22,7 @@ func TestGetReservation_Success(t *testing.T) {
 	confirmedAt := now.Add(-30 * time.Minute)
 	expiresAt := now.Add(30 * time.Minute)
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByID(gomock.Any(), testReservationID).Return(&model.Reservation{
 		ID:             testReservationID,
 		DriverID:       testDriverID,
@@ -37,7 +37,7 @@ func TestGetReservation_Success(t *testing.T) {
 		CreatedAt:      now,
 	}, nil)
 
-	res, appErr := newUsecase(repo).GetReservation(context.Background(), testReservationID)
+	res, appErr := newUsecase(repo, ctrl).GetReservation(context.Background(), testReservationID)
 
 	require.Nil(t, appErr)
 	assert.Equal(t, testReservationID, res.ReservationID)
@@ -56,11 +56,11 @@ func TestGetReservation_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByID(gomock.Any(), testReservationID).
 		Return(nil, apperror.New("not_found", "reservation not found"))
 
-	_, appErr := newUsecase(repo).GetReservation(context.Background(), testReservationID)
+	_, appErr := newUsecase(repo, ctrl).GetReservation(context.Background(), testReservationID)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "not_found", appErr.ErrorCode)
@@ -70,11 +70,11 @@ func TestGetReservation_DBError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByID(gomock.Any(), testReservationID).
 		Return(nil, apperror.New("db_error", "failed to query reservation"))
 
-	_, appErr := newUsecase(repo).GetReservation(context.Background(), testReservationID)
+	_, appErr := newUsecase(repo, ctrl).GetReservation(context.Background(), testReservationID)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "db_error", appErr.ErrorCode)
@@ -84,7 +84,7 @@ func TestGetReservation_NilOptionalFields(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByID(gomock.Any(), testReservationID).Return(&model.Reservation{
 		ID:             testReservationID,
 		DriverID:       testDriverID,
@@ -99,7 +99,7 @@ func TestGetReservation_NilOptionalFields(t *testing.T) {
 		CreatedAt:      time.Now(),
 	}, nil)
 
-	res, appErr := newUsecase(repo).GetReservation(context.Background(), testReservationID)
+	res, appErr := newUsecase(repo, ctrl).GetReservation(context.Background(), testReservationID)
 
 	require.Nil(t, appErr)
 	assert.Nil(t, res.ConfirmedAt)

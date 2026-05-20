@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package payment.v1;
+
+option go_package = "parkir-pintar/services/payment/gen/payment/v1;paymentv1";
+
+enum PaymentType {
+  PAYMENT_TYPE_UNSPECIFIED = 0;
+  PAYMENT_TYPE_BOOKING_FEE = 1;
+  PAYMENT_TYPE_PARKING_FEE = 2;
+}
+
+enum PaymentMethod {
+  PAYMENT_METHOD_UNSPECIFIED = 0;
+  PAYMENT_METHOD_QRIS        = 1;
+}
+
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_PENDING     = 1;
+  PAYMENT_STATUS_SUCCESS     = 2;
+  PAYMENT_STATUS_FAILED      = 3;
+  PAYMENT_STATUS_EXPIRED     = 4;
+}
+
+// Internal gRPC API — called by Reservation Service and Billing Service
+service PaymentService {
+  rpc CreatePayment      (CreatePaymentRequest)      returns (CreatePaymentResponse);
+  rpc GetPaymentStatus   (GetPaymentStatusRequest)   returns (GetPaymentStatusResponse);
+}
+
+// ── CreatePayment ────────────────────────────────────────────────────────────
+
+message CreatePaymentRequest {
+  string        idempotency_key = 1; // UUID
+  string        reference_id    = 2; // UUID — reservation_id or invoice_id
+  PaymentType   payment_type    = 3; // BOOKING_FEE | PARKING_FEE
+  int64         amount_idr      = 4;
+  string        driver_id       = 5; // UUID
+  PaymentMethod method          = 6; // QRIS
+}
+
+message CreatePaymentResponse {
+  string        payment_id   = 1; // UUID
+  string        qr_code_url  = 2; // QRIS code URL
+  PaymentStatus status       = 3; // PENDING
+}
+
+// ── GetPaymentStatus ─────────────────────────────────────────────────────────
+
+message GetPaymentStatusRequest {
+  string payment_id = 1; // UUID
+}
+
+message GetPaymentStatusResponse {
+  string        payment_id   = 1;
+  string        reference_id = 2;
+  PaymentType   payment_type = 3;
+  PaymentStatus status       = 4;
+  string        gateway_ref  = 5; // External gateway reference (set on SUCCESS)
+  int64         amount_idr   = 6;
+}

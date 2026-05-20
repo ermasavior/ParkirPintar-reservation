@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// CreateReservation implements ReservationService.CreateReservation
 func (s *ReservationServer) CreateReservation(ctx context.Context, req *pb.CreateReservationRequest) (*pb.CreateReservationResponse, error) {
 	if !validateUUID(req.IdempotencyKey) {
 		return nil, status.Error(codes.InvalidArgument, "idempotency_key must be a valid UUID")
@@ -62,7 +61,6 @@ func (s *ReservationServer) CreateReservation(ctx context.Context, req *pb.Creat
 	}, nil
 }
 
-// GetReservation implements ReservationService.GetReservation
 func (s *ReservationServer) GetReservation(ctx context.Context, req *pb.GetReservationRequest) (*pb.GetReservationResponse, error) {
 	if !validateUUID(req.ReservationId) {
 		return nil, status.Error(codes.InvalidArgument, "reservation_id must be a valid UUID")

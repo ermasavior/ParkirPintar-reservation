@@ -12,18 +12,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DB is the minimal interface the repository needs from pgxpool.Pool.
-// *pgxpool.Pool satisfies this interface; pgxmock.NewPool() also satisfies it in tests.
 type DB interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-// compile-time check: *pgxpool.Pool must satisfy DB
 var _ DB = (*pgxpool.Pool)(nil)
 
-// Reservation defines the data access contract for the reservation domain
 type Reservation interface {
 	// GetByIdempotencyKey returns an existing reservation by idempotency key (for duplicate detection)
 	GetByIdempotencyKey(ctx context.Context, key string) (*model.Reservation, *apperror.AppError)
@@ -48,15 +45,25 @@ type Reservation interface {
 
 	// ReleaseSpotLock releases the Redis distributed lock on a spot
 	ReleaseSpotLock(ctx context.Context, spotID string) *apperror.AppError
+
+	// ConfirmReservation sets reservation status=CONFIRMED, confirmed_at=now(), expires_at=now()+1h
+	ConfirmReservation(ctx context.Context, reservationID string) *apperror.AppError
+
+	// CancelReservationAndReleaseSpot atomically sets reservation=CANCELLED and spot=AVAILABLE
+	CancelReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError
+
+	// GetExpiredReservations returns CONFIRMED reservations whose expires_at < now()
+	GetExpiredReservations(ctx context.Context) ([]model.Reservation, *apperror.AppError)
+
+	// ExpireReservationAndReleaseSpot atomically sets reservation=EXPIRED and spot=AVAILABLE
+	ExpireReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError
 }
 
-// ReservationRepository is the concrete implementation
 type ReservationRepository struct {
 	db    DB
 	redis *redis.Client
 }
 
-// NewReservation creates a new ReservationRepository
 func NewReservation(db DB, redis *redis.Client) Reservation {
 	return &ReservationRepository{
 		db:    db,

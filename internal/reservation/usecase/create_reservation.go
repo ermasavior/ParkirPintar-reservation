@@ -4,27 +4,21 @@ import (
 	"context"
 	"log/slog"
 
+	paymentpb "parkir-pintar/services/reservation/gen/payment/v1"
 	"parkir-pintar/services/reservation/internal/reservation/model"
 	"parkir-pintar/services/reservation/pkg/apperror"
 	"parkir-pintar/services/reservation/pkg/logger"
 )
 
-// CreateReservation handles the full reservation creation flow:
-// 1. Idempotency check
-// 2. Validate driver has no active reservation
-// 3. Acquire Redis lock on spot
-// 4. Verify spot is AVAILABLE in DB (FOR UPDATE)
-// 5. INSERT reservation + UPDATE spot=LOCKED in a single transaction
-// 6. Release Redis lock
-// 7. Call Payment Service to create QRIS payment (stub — to be wired)
-// 8. Return response with qr_code_url
+const bookingFeeIDR int64 = 5000
+
 func (u *ReservationUsecase) CreateReservation(ctx context.Context, req model.CreateReservationRequest) (*model.CreateReservationResponse, *apperror.AppError) {
-	// Step 1: Idempotency check
+	// Idempotency check
 	if resp, appErr := u.checkIdempotency(ctx, req.IdempotencyKey); appErr != nil || resp != nil {
 		return resp, appErr
 	}
 
-	// Step 2: Validate driver has no active reservation
+	// Validate driver has no active reservation
 	hasActive, appErr := u.repo.HasActiveReservation(ctx, req.DriverID)
 	if appErr != nil {
 		return nil, appErr
@@ -33,7 +27,7 @@ func (u *ReservationUsecase) CreateReservation(ctx context.Context, req model.Cr
 		return nil, apperror.New("conflict", "driver already has an active reservation")
 	}
 
-	// Step 3 & 4: Resolve spot and acquire Redis lock
+	// Resolve spot and acquire Redis lock
 	var spot *model.Spot
 	if req.Mode == model.AssignmentModeUserSelected {
 		spot, appErr = u.resolveUserSelectedSpot(ctx, req)
@@ -44,11 +38,27 @@ func (u *ReservationUsecase) CreateReservation(ctx context.Context, req model.Cr
 		return nil, appErr
 	}
 
-	// Step 5: INSERT reservation + UPDATE spot=LOCKED in a single DB transaction
-	// Step 7: Call Payment Service to create QRIS booking fee payment
-	// TODO: wire up Payment Service client (gRPC)
-	qrCodeURL := "https://payment-gateway.example.com/qris/stub"
+	// Call Payment Service to create QRIS booking fee payment
+	paymentResult, appErr := u.paymentClient.CreatePayment(ctx,
+		req.IdempotencyKey,
+		"",
+		req.DriverID,
+		paymentpb.PaymentType_PAYMENT_TYPE_BOOKING_FEE,
+		bookingFeeIDR,
+	)
+	if appErr != nil {
+		logger.Error(ctx, "CreateReservation: payment service call failed",
+			slog.String("error", appErr.Error()),
+		)
+		_ = u.repo.ReleaseSpotLock(ctx, spot.ID)
+		return nil, appErr
+	}
+	qrCodeURL := paymentResult.QRCodeURL
+	logger.Info(ctx, "CreateReservation: payment created",
+		slog.String("payment_id", paymentResult.PaymentID),
+	)
 
+	// INSERT reservation + UPDATE spot=LOCKED in a single DB transaction
 	reservation := &model.Reservation{
 		IdempotencyKey: req.IdempotencyKey,
 		DriverID:       req.DriverID,
@@ -64,19 +74,13 @@ func (u *ReservationUsecase) CreateReservation(ctx context.Context, req model.Cr
 		return nil, appErr
 	}
 
-	// Step 6: Release Redis lock — spot is now protected by DB status=LOCKED
+	// Release Redis lock — spot is now protected by DB status=LOCKED
 	if releaseErr := u.repo.ReleaseSpotLock(ctx, spot.ID); releaseErr != nil {
-		// Non-fatal: lock will expire via TTL. Log and continue.
 		logger.Warn(ctx, "CreateReservation: failed to release spot lock after DB commit",
 			slog.String("spot_id", spot.ID),
 			slog.String("error", releaseErr.Error()),
 		)
 	}
-
-	logger.Info(ctx, "CreateReservation: payment service call stubbed",
-		slog.String("reservation_id", created.ID),
-		slog.String("spot_id", spot.ID),
-	)
 
 	return &model.CreateReservationResponse{
 		ReservationID: created.ID,

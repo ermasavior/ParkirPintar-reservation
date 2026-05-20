@@ -360,3 +360,150 @@ func TestAcquireRelease_LockCycle(t *testing.T) {
 	require.Nil(t, appErr)
 	assert.True(t, ok)
 }
+
+// ── DB error paths ────────────────────────────────────────────────────────────
+
+func TestGetByIdempotencyKey_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT r\.id`).
+		WithArgs(testIdemKey).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	_, appErr := repo.GetByIdempotencyKey(context.Background(), testIdemKey)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestGetByID_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT r\.id`).
+		WithArgs(testReservationID).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	_, appErr := repo.GetByID(context.Background(), testReservationID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestHasActiveReservation_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT COUNT`).
+		WithArgs(testDriverID, pgxmock.AnyArg()).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	_, appErr := repo.HasActiveReservation(context.Background(), testDriverID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestGetAvailableSpot_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT id`).
+		WithArgs(model.SpotStatusAvailable, model.VehicleTypeCar).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	_, appErr := repo.GetAvailableSpot(context.Background(), model.VehicleTypeCar)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestGetSpotByID_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT id`).
+		WithArgs(testSpotID).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	_, appErr := repo.GetSpotByID(context.Background(), testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestCreateReservationAndLockSpot_BeginFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin().WillReturnError(fmt.Errorf("begin failed"))
+
+	_, appErr := repo.CreateReservationAndLockSpot(context.Background(), &model.Reservation{
+		IdempotencyKey: testIdemKey,
+		DriverID:       testDriverID,
+		SpotID:         testSpotID,
+		VehicleType:    model.VehicleTypeCar,
+		AssignmentMode: model.AssignmentModeSystemAssigned,
+	})
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestCreateReservationAndLockSpot_CommitFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	now := time.Now()
+	db.ExpectBegin()
+	db.ExpectQuery(`INSERT INTO reservations`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at"}).AddRow(testReservationID, now))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectCommit().WillReturnError(fmt.Errorf("commit failed"))
+
+	_, appErr := repo.CreateReservationAndLockSpot(context.Background(), &model.Reservation{
+		IdempotencyKey: testIdemKey,
+		DriverID:       testDriverID,
+		SpotID:         testSpotID,
+		VehicleType:    model.VehicleTypeCar,
+		AssignmentMode: model.AssignmentModeSystemAssigned,
+	})
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestAcquireSpotLock_RedisError(t *testing.T) {
+	db, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:1", DialTimeout: 100 * time.Millisecond})
+	t.Cleanup(func() { _ = rc.Close() })
+
+	repo := &ReservationRepository{db: db, redis: rc}
+
+	_, appErr := repo.AcquireSpotLock(context.Background(), testSpotID, testDriverID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "redis_error", appErr.ErrorCode)
+}
+
+func TestReleaseSpotLock_RedisError(t *testing.T) {
+	db, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:1", DialTimeout: 100 * time.Millisecond})
+	t.Cleanup(func() { _ = rc.Close() })
+
+	repo := &ReservationRepository{db: db, redis: rc}
+
+	appErr := repo.ReleaseSpotLock(context.Background(), testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "redis_error", appErr.ErrorCode)
+}

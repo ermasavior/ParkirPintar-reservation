@@ -7,7 +7,6 @@ import (
 	"parkir-pintar/services/reservation/pkg/apperror"
 )
 
-// GetReservation retrieves a reservation by its UUID
 func (u *ReservationUsecase) GetReservation(ctx context.Context, reservationID string) (*model.GetReservationResponse, *apperror.AppError) {
 	reservation, appErr := u.repo.GetByID(ctx, reservationID)
 	if appErr != nil {

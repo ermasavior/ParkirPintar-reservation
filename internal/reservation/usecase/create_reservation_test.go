@@ -6,8 +6,10 @@ import (
 	"time"
 
 	mockreservation "parkir-pintar/services/reservation/_mock/reservation"
+	mockpaymentclient "parkir-pintar/services/reservation/_mock/pkg/paymentclient"
 	"parkir-pintar/services/reservation/internal/reservation/model"
 	"parkir-pintar/services/reservation/pkg/apperror"
+	"parkir-pintar/services/reservation/pkg/paymentclient"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,10 +23,15 @@ const (
 	testReservationID  = "880e8400-e29b-41d4-a716-446655440003"
 )
 
-func newUsecase(repo *mockreservation.MockReservation) *ReservationUsecase {
-	return &ReservationUsecase{repo: repo, paymentBaseURL: "localhost:8082"}
+func newUsecase(repo *mockreservation.MockReservationRepository, ctrl *gomock.Controller) *ReservationUsecase {
+	pc := mockpaymentclient.NewMockPaymentService(ctrl)
+	pc.EXPECT().CreatePayment(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&paymentclient.CreatePaymentResult{
+			PaymentID: "stub-payment-id",
+			QRCodeURL: "https://qr.example.com/stub",
+		}, nil).AnyTimes()
+	return &ReservationUsecase{repo: repo, paymentClient: pc}
 }
-
 func validSpot() *model.Spot {
 	return &model.Spot{
 		ID:          testSpotID,
@@ -73,10 +80,10 @@ func TestCreateReservation_IdempotencyReplay(t *testing.T) {
 		QRCodeURL:   "https://payment-gateway.example.com/qris/stub",
 	}
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(existing, nil)
 
-	res, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	res, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.Nil(t, appErr)
 	assert.Equal(t, testReservationID, res.ReservationID)
@@ -90,11 +97,11 @@ func TestCreateReservation_IdempotencyDBError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).
 		Return(nil, apperror.New("db_error", "failed to query reservation by idempotency key"))
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "db_error", appErr.ErrorCode)
@@ -106,11 +113,11 @@ func TestCreateReservation_DriverHasActiveReservation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(true, nil)
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "conflict", appErr.ErrorCode)
@@ -121,12 +128,12 @@ func TestCreateReservation_HasActiveReservationDBError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).
 		Return(false, apperror.New("db_error", "failed to check active reservation"))
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "db_error", appErr.ErrorCode)
@@ -138,14 +145,14 @@ func TestCreateReservation_UserSelected_MissingSpotID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 
 	req := baseRequest(model.AssignmentModeUserSelected)
 	req.SpotID = ""
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "validation_error", appErr.ErrorCode)
@@ -155,7 +162,7 @@ func TestCreateReservation_UserSelected_LockNotAcquired(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(false, nil)
@@ -163,7 +170,7 @@ func TestCreateReservation_UserSelected_LockNotAcquired(t *testing.T) {
 	req := baseRequest(model.AssignmentModeUserSelected)
 	req.SpotID = testSpotID
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "conflict", appErr.ErrorCode)
@@ -173,7 +180,7 @@ func TestCreateReservation_UserSelected_LockAcquireError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).
@@ -182,7 +189,7 @@ func TestCreateReservation_UserSelected_LockAcquireError(t *testing.T) {
 	req := baseRequest(model.AssignmentModeUserSelected)
 	req.SpotID = testSpotID
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "redis_error", appErr.ErrorCode)
@@ -192,7 +199,7 @@ func TestCreateReservation_UserSelected_SpotNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(true, nil)
@@ -203,7 +210,7 @@ func TestCreateReservation_UserSelected_SpotNotFound(t *testing.T) {
 	req := baseRequest(model.AssignmentModeUserSelected)
 	req.SpotID = testSpotID
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "not_found", appErr.ErrorCode)
@@ -216,7 +223,7 @@ func TestCreateReservation_UserSelected_SpotNotAvailable(t *testing.T) {
 	lockedSpot := validSpot()
 	lockedSpot.Status = model.SpotStatusLocked
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(true, nil)
@@ -226,7 +233,7 @@ func TestCreateReservation_UserSelected_SpotNotAvailable(t *testing.T) {
 	req := baseRequest(model.AssignmentModeUserSelected)
 	req.SpotID = testSpotID
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "conflict", appErr.ErrorCode)
@@ -237,7 +244,7 @@ func TestCreateReservation_UserSelected_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(true, nil)
@@ -248,7 +255,7 @@ func TestCreateReservation_UserSelected_Success(t *testing.T) {
 	req := baseRequest(model.AssignmentModeUserSelected)
 	req.SpotID = testSpotID
 
-	res, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	res, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.Nil(t, appErr)
 	assert.Equal(t, testReservationID, res.ReservationID)
@@ -265,13 +272,13 @@ func TestCreateReservation_SystemAssigned_NoSpotsAvailable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).
 		Return(nil, apperror.New("no_spots_available", "no available spots for the requested vehicle type"))
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "no_spots_available", appErr.ErrorCode)
@@ -281,13 +288,13 @@ func TestCreateReservation_SystemAssigned_LockNotAcquired(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).Return(validSpot(), nil)
 	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(false, nil)
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "conflict", appErr.ErrorCode)
@@ -298,7 +305,7 @@ func TestCreateReservation_SystemAssigned_DBInsertError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).Return(validSpot(), nil)
@@ -307,7 +314,7 @@ func TestCreateReservation_SystemAssigned_DBInsertError(t *testing.T) {
 		Return(nil, apperror.New("db_error", "failed to insert reservation"))
 	repo.EXPECT().ReleaseSpotLock(gomock.Any(), testSpotID).Return(nil)
 
-	_, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, "db_error", appErr.ErrorCode)
@@ -317,7 +324,7 @@ func TestCreateReservation_SystemAssigned_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).Return(validSpot(), nil)
@@ -325,7 +332,7 @@ func TestCreateReservation_SystemAssigned_Success(t *testing.T) {
 	repo.EXPECT().CreateReservationAndLockSpot(gomock.Any(), gomock.Any()).Return(validCreatedReservation(), nil)
 	repo.EXPECT().ReleaseSpotLock(gomock.Any(), testSpotID).Return(nil)
 
-	res, appErr := newUsecase(repo).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+	res, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
 
 	require.Nil(t, appErr)
 	assert.Equal(t, testReservationID, res.ReservationID)
@@ -351,7 +358,7 @@ func TestCreateReservation_SystemAssigned_Motorcycle_Success(t *testing.T) {
 	created.SpotCode = "M1"
 	created.FloorNumber = 2
 
-	repo := mockreservation.NewMockReservation(ctrl)
+	repo := mockreservation.NewMockReservationRepository(ctrl)
 	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
 	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
 	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeMotorcycle).Return(motoSpot, nil)
@@ -362,7 +369,7 @@ func TestCreateReservation_SystemAssigned_Motorcycle_Success(t *testing.T) {
 	req := baseRequest(model.AssignmentModeSystemAssigned)
 	req.VehicleType = model.VehicleTypeMotorcycle
 
-	res, appErr := newUsecase(repo).CreateReservation(context.Background(), req)
+	res, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), req)
 
 	require.Nil(t, appErr)
 	assert.Equal(t, "M1", res.SpotCode)

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	mockusecase "parkir-pintar/services/reservation/_mock/usecase"
+	mockreservation "parkir-pintar/services/reservation/_mock/reservation"
 	pb "parkir-pintar/services/reservation/gen/reservation/v1"
 	"parkir-pintar/services/reservation/internal/reservation/model"
 	"parkir-pintar/services/reservation/pkg/apperror"
@@ -24,7 +24,7 @@ const (
 	validReservationID = "880e8400-e29b-41d4-a716-446655440003"
 )
 
-func newServer(uc *mockusecase.MockReservation) *ReservationServer {
+func newServer(uc *mockreservation.MockReservationUsecase) *ReservationServer {
 	return &ReservationServer{uc: uc}
 }
 
@@ -41,7 +41,7 @@ func TestCreateReservation_InvalidIdempotencyKey(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	srv := newServer(mockusecase.NewMockReservation(ctrl))
+	srv := newServer(mockreservation.NewMockReservationUsecase(ctrl))
 
 	_, err := srv.CreateReservation(context.Background(), &pb.CreateReservationRequest{
 		IdempotencyKey: "not-a-uuid",
@@ -59,7 +59,7 @@ func TestCreateReservation_InvalidDriverID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	srv := newServer(mockusecase.NewMockReservation(ctrl))
+	srv := newServer(mockreservation.NewMockReservationUsecase(ctrl))
 
 	_, err := srv.CreateReservation(context.Background(), &pb.CreateReservationRequest{
 		IdempotencyKey: validIdemKey,
@@ -77,7 +77,7 @@ func TestCreateReservation_UserSelected_InvalidSpotID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	srv := newServer(mockusecase.NewMockReservation(ctrl))
+	srv := newServer(mockreservation.NewMockReservationUsecase(ctrl))
 
 	_, err := srv.CreateReservation(context.Background(), &pb.CreateReservationRequest{
 		IdempotencyKey: validIdemKey,
@@ -96,7 +96,7 @@ func TestCreateReservation_UserSelected_EmptySpotID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	srv := newServer(mockusecase.NewMockReservation(ctrl))
+	srv := newServer(mockreservation.NewMockReservationUsecase(ctrl))
 
 	_, err := srv.CreateReservation(context.Background(), &pb.CreateReservationRequest{
 		IdempotencyKey: validIdemKey,
@@ -116,7 +116,7 @@ func TestCreateReservation_Conflict(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(nil, apperror.New("conflict", "driver already has an active reservation"))
 
@@ -135,7 +135,7 @@ func TestCreateReservation_NoSpotsAvailable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(nil, apperror.New("no_spots_available", "no available spots"))
 
@@ -154,7 +154,7 @@ func TestCreateReservation_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(nil, apperror.New("not_found", "spot not found"))
 
@@ -173,7 +173,7 @@ func TestCreateReservation_ValidationError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(nil, apperror.New("validation_error", "spot_id is required for USER_SELECTED mode"))
 
@@ -192,7 +192,7 @@ func TestCreateReservation_InternalError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(nil, apperror.New("db_error", "failed to insert reservation"))
 
@@ -213,7 +213,7 @@ func TestCreateReservation_SystemAssigned_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(&model.CreateReservationResponse{
 			ReservationID: validReservationID,
@@ -244,7 +244,7 @@ func TestCreateReservation_UserSelected_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().CreateReservation(gomock.Any(), gomock.Any()).
 		Return(&model.CreateReservationResponse{
 			ReservationID: validReservationID,
@@ -275,7 +275,7 @@ func TestGetReservation_InvalidReservationID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	srv := newServer(mockusecase.NewMockReservation(ctrl))
+	srv := newServer(mockreservation.NewMockReservationUsecase(ctrl))
 
 	_, err := srv.GetReservation(context.Background(), &pb.GetReservationRequest{
 		ReservationId: "not-a-uuid",
@@ -290,7 +290,7 @@ func TestGetReservation_EmptyReservationID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	srv := newServer(mockusecase.NewMockReservation(ctrl))
+	srv := newServer(mockreservation.NewMockReservationUsecase(ctrl))
 
 	_, err := srv.GetReservation(context.Background(), &pb.GetReservationRequest{
 		ReservationId: "",
@@ -306,7 +306,7 @@ func TestGetReservation_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().GetReservation(gomock.Any(), validReservationID).
 		Return(nil, apperror.New("not_found", "reservation not found"))
 
@@ -322,7 +322,7 @@ func TestGetReservation_InternalError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().GetReservation(gomock.Any(), validReservationID).
 		Return(nil, apperror.New("db_error", "failed to query reservation"))
 
@@ -344,7 +344,7 @@ func TestGetReservation_Success_WithOptionalFields(t *testing.T) {
 	confirmedAt := now.Add(-30 * time.Minute)
 	expiresAt := now.Add(30 * time.Minute)
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().GetReservation(gomock.Any(), validReservationID).
 		Return(&model.GetReservationResponse{
 			ReservationID:  validReservationID,
@@ -381,7 +381,7 @@ func TestGetReservation_Success_NilOptionalFields(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	uc := mockusecase.NewMockReservation(ctrl)
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
 	uc.EXPECT().GetReservation(gomock.Any(), validReservationID).
 		Return(&model.GetReservationResponse{
 			ReservationID:  validReservationID,

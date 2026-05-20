@@ -15,12 +15,13 @@ import (
 	"parkir-pintar/services/reservation/pkg/dotenv"
 	"parkir-pintar/services/reservation/pkg/logger"
 	pkgOtel "parkir-pintar/services/reservation/pkg/otel"
+	"parkir-pintar/services/reservation/pkg/paymentclient"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -43,7 +44,7 @@ func main() {
 
 	ctx := context.Background()
 
-	// PostgreSQL — pgxpool
+	// PostgreSQL
 	pool, err := pgxpool.New(ctx, dotenv.GetEnv("POSTGRES_DSN", ""))
 	if err != nil {
 		logger.Error(ctx, "failed to create postgres pool", slog.String("error", err.Error()))
@@ -74,7 +75,33 @@ func main() {
 	}
 	logger.Info(ctx, "connected to redis")
 
-	paymentBaseURL := dotenv.GetEnv("PAYMENT_SERVICE_URL", "localhost:8082")
+	// NATS
+	natsURL := dotenv.GetEnv("NATS_URL", nats.DefaultURL)
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		logger.Error(ctx, "failed to connect to NATS", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	defer nc.Close()
+	logger.Info(ctx, "connected to NATS")
+
+	// Payment Service gRPC client
+	paymentServiceURL := dotenv.GetEnv("PAYMENT_SERVICE_URL", "localhost:8086")
+	pc, err := paymentclient.New(paymentServiceURL)
+	if err != nil {
+		logger.Error(ctx, "failed to create payment service client", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	logger.Info(ctx, "payment service client created", slog.String("target", paymentServiceURL))
+
+	// Reservation domain
+	svc := reservation.New(pool, redisClient, nc, pc)
+
+	if err := svc.Start(); err != nil {
+		logger.Error(ctx, "failed to start reservation service", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	defer svc.Stop()
 
 	// gRPC server
 	port := dotenv.GetEnv("APP_PORT", "8081")
@@ -87,11 +114,10 @@ func main() {
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
-	reservation.RegisterGRPC(grpcServer, pool, redisClient, paymentBaseURL)
-	reflection.Register(grpcServer)
+	svc.RegisterGRPC(grpcServer)
 
 	go func() {
-		logger.Info(ctx, "reservation service starting", slog.String("port", port))
+		logger.Info(ctx, "reservation gRPC server listening", slog.String("port", port))
 		if err := grpcServer.Serve(lis); err != nil {
 			logger.Error(ctx, "gRPC server error", slog.String("error", err.Error()))
 			os.Exit(1)

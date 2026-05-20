@@ -211,3 +211,125 @@ func (r *ReservationRepository) ReleaseSpotLock(ctx context.Context, spotID stri
 	}
 	return nil
 }
+
+// ConfirmReservation sets reservation status=CONFIRMED, confirmed_at=now(), expires_at=now()+1h
+func (r *ReservationRepository) ConfirmReservation(ctx context.Context, reservationID string) *apperror.AppError {
+	_, err := r.db.Exec(ctx,
+		`UPDATE reservations
+		 SET status = $1, confirmed_at = NOW(), expires_at = NOW() + INTERVAL '1 hour'
+		 WHERE id = $2`,
+		model.ReservationStatusConfirmed, reservationID,
+	)
+	if err != nil {
+		logger.Error(ctx, "ConfirmReservation failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to confirm reservation")
+	}
+	return nil
+}
+
+// CancelReservationAndReleaseSpot atomically sets reservation=CANCELLED and spot=AVAILABLE
+func (r *ReservationRepository) CancelReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		logger.Error(ctx, "CancelReservationAndReleaseSpot: begin tx failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to begin transaction")
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	_, err = tx.Exec(ctx,
+		`UPDATE reservations SET status = $1 WHERE id = $2`,
+		model.ReservationStatusCancelled, reservationID,
+	)
+	if err != nil {
+		logger.Error(ctx, "CancelReservationAndReleaseSpot: cancel reservation failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to cancel reservation")
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE spots SET status = $1 WHERE id = $2`,
+		model.SpotStatusAvailable, spotID,
+	)
+	if err != nil {
+		logger.Error(ctx, "CancelReservationAndReleaseSpot: release spot failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to release spot")
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		logger.Error(ctx, "CancelReservationAndReleaseSpot: commit failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to commit transaction")
+	}
+
+	return nil
+}
+
+// GetExpiredReservations returns CONFIRMED reservations whose expires_at < now()
+func (r *ReservationRepository) GetExpiredReservations(ctx context.Context) ([]model.Reservation, *apperror.AppError) {
+	query := `SELECT id, driver_id, spot_id FROM reservations
+	           WHERE status = $1 AND expires_at < NOW()`
+
+	rows, err := r.db.Query(ctx, query, model.ReservationStatusConfirmed)
+	if err != nil {
+		logger.Error(ctx, "GetExpiredReservations failed", slog.String("error", err.Error()))
+		return nil, apperror.New("db_error", "failed to query expired reservations")
+	}
+	defer rows.Close()
+
+	var reservations []model.Reservation
+	for rows.Next() {
+		var res model.Reservation
+		if err := rows.Scan(&res.ID, &res.DriverID, &res.SpotID); err != nil {
+			logger.Error(ctx, "GetExpiredReservations scan failed", slog.String("error", err.Error()))
+			return nil, apperror.New("db_error", "failed to scan expired reservation")
+		}
+		reservations = append(reservations, res)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Error(ctx, "GetExpiredReservations rows error", slog.String("error", err.Error()))
+		return nil, apperror.New("db_error", "failed to iterate expired reservations")
+	}
+
+	return reservations, nil
+}
+
+// ExpireReservationAndReleaseSpot atomically sets reservation=EXPIRED and spot=AVAILABLE
+func (r *ReservationRepository) ExpireReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		logger.Error(ctx, "ExpireReservationAndReleaseSpot: begin tx failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to begin transaction")
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	_, err = tx.Exec(ctx,
+		`UPDATE reservations SET status = $1 WHERE id = $2`,
+		model.ReservationStatusExpired, reservationID,
+	)
+	if err != nil {
+		logger.Error(ctx, "ExpireReservationAndReleaseSpot: expire reservation failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to expire reservation")
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE spots SET status = $1 WHERE id = $2`,
+		model.SpotStatusAvailable, spotID,
+	)
+	if err != nil {
+		logger.Error(ctx, "ExpireReservationAndReleaseSpot: release spot failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to release spot")
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		logger.Error(ctx, "ExpireReservationAndReleaseSpot: commit failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", "failed to commit transaction")
+	}
+
+	return nil
+}
