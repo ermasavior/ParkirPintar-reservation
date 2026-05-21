@@ -141,7 +141,7 @@ func (r *ReservationRepository) GetSpotByID(ctx context.Context, spotID string) 
 	return &spot, nil
 }
 
-// CreateReservationAndLockSpot atomically inserts a reservation and sets spot status to LOCKED
+// CreateReservationAndLockSpot atomically creainserts a reservation and sets spot status to LOCKED
 func (r *ReservationRepository) CreateReservationAndLockSpot(ctx context.Context, reservation *model.Reservation) (*model.Reservation, *apperror.AppError) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

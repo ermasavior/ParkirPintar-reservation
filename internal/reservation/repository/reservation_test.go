@@ -515,3 +515,261 @@ func TestReleaseSpotLock_RedisError(t *testing.T) {
 	require.NotNil(t, appErr)
 	assert.Equal(t, "redis_error", appErr.ErrorCode)
 }
+
+// ── ConfirmReservation ────────────────────────────────────────────────────────
+
+func TestConfirmReservation_Success(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	appErr := repo.ConfirmReservation(context.Background(), testReservationID)
+
+	require.Nil(t, appErr)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestConfirmReservation_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	appErr := repo.ConfirmReservation(context.Background(), testReservationID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+// ── CancelReservationAndReleaseSpot ──────────────────────────────────────────
+
+func TestCancelReservationAndReleaseSpot_Success(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), testSpotID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectCommit()
+
+	appErr := repo.CancelReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.Nil(t, appErr)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestCancelReservationAndReleaseSpot_BeginFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin().WillReturnError(fmt.Errorf("begin failed"))
+
+	appErr := repo.CancelReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestCancelReservationAndReleaseSpot_CancelFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnError(fmt.Errorf("update failed"))
+	db.ExpectRollback()
+
+	appErr := repo.CancelReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestCancelReservationAndReleaseSpot_ReleaseFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), testSpotID).
+		WillReturnError(fmt.Errorf("update failed"))
+	db.ExpectRollback()
+
+	appErr := repo.CancelReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestCancelReservationAndReleaseSpot_CommitFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), testSpotID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectCommit().WillReturnError(fmt.Errorf("commit failed"))
+
+	appErr := repo.CancelReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+// ── GetExpiredReservations ────────────────────────────────────────────────────
+
+func TestGetExpiredReservations_Empty(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT id`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "driver_id", "spot_id"}))
+
+	reservations, appErr := repo.GetExpiredReservations(context.Background())
+
+	require.Nil(t, appErr)
+	assert.Empty(t, reservations)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestGetExpiredReservations_MultipleRows(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	id1 := "aaa00000-e29b-41d4-a716-446655440001"
+	id2 := "bbb00000-e29b-41d4-a716-446655440002"
+	spot1 := "ccc00000-e29b-41d4-a716-446655440003"
+	spot2 := "ddd00000-e29b-41d4-a716-446655440004"
+	driver1 := "eee00000-e29b-41d4-a716-446655440005"
+	driver2 := "fff00000-e29b-41d4-a716-446655440006"
+
+	db.ExpectQuery(`SELECT id`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "driver_id", "spot_id"}).
+			AddRow(id1, driver1, spot1).
+			AddRow(id2, driver2, spot2))
+
+	reservations, appErr := repo.GetExpiredReservations(context.Background())
+
+	require.Nil(t, appErr)
+	require.Len(t, reservations, 2)
+	assert.Equal(t, id1, reservations[0].ID)
+	assert.Equal(t, driver1, reservations[0].DriverID)
+	assert.Equal(t, spot1, reservations[0].SpotID)
+	assert.Equal(t, id2, reservations[1].ID)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestGetExpiredReservations_DBError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectQuery(`SELECT id`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnError(fmt.Errorf("connection refused"))
+
+	_, appErr := repo.GetExpiredReservations(context.Background())
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+// ── ExpireReservationAndReleaseSpot ──────────────────────────────────────────
+
+func TestExpireReservationAndReleaseSpot_Success(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), testSpotID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectCommit()
+
+	appErr := repo.ExpireReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.Nil(t, appErr)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestExpireReservationAndReleaseSpot_BeginFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin().WillReturnError(fmt.Errorf("begin failed"))
+
+	appErr := repo.ExpireReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestExpireReservationAndReleaseSpot_ExpireFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnError(fmt.Errorf("update failed"))
+	db.ExpectRollback()
+
+	appErr := repo.ExpireReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestExpireReservationAndReleaseSpot_ReleaseFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), testSpotID).
+		WillReturnError(fmt.Errorf("update failed"))
+	db.ExpectRollback()
+
+	appErr := repo.ExpireReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
+func TestExpireReservationAndReleaseSpot_CommitFails(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	db.ExpectBegin()
+	db.ExpectExec(`UPDATE reservations`).
+		WithArgs(pgxmock.AnyArg(), testReservationID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectExec(`UPDATE spots`).
+		WithArgs(pgxmock.AnyArg(), testSpotID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	db.ExpectCommit().WillReturnError(fmt.Errorf("commit failed"))
+
+	appErr := repo.ExpireReservationAndReleaseSpot(context.Background(), testReservationID, testSpotID)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}

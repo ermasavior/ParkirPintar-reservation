@@ -343,6 +343,81 @@ func TestCreateReservation_SystemAssigned_Success(t *testing.T) {
 	assert.NotEmpty(t, res.QRCodeURL)
 }
 
+// ── Payment client failure ────────────────────────────────────────────────────
+
+func TestCreateReservation_PaymentClientFails_ReleasesLock(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := mockreservation.NewMockReservationRepository(ctrl)
+	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
+	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
+	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).Return(validSpot(), nil)
+	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(true, nil)
+	// Lock must be released when payment fails
+	repo.EXPECT().ReleaseSpotLock(gomock.Any(), testSpotID).Return(nil)
+
+	pc := mockpaymentclient.NewMockPaymentService(ctrl)
+	pc.EXPECT().CreatePayment(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, apperror.New("payment_error", "payment service unavailable"))
+
+	uc := &ReservationUsecase{repo: repo, paymentClient: pc}
+	_, appErr := uc.CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "payment_error", appErr.ErrorCode)
+}
+
+// ── ReleaseSpotLock warn path after DB commit ─────────────────────────────────
+
+func TestCreateReservation_ReleaseSpotLockWarnAfterCommit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := mockreservation.NewMockReservationRepository(ctrl)
+	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
+	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
+	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).Return(validSpot(), nil)
+	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).Return(true, nil)
+	repo.EXPECT().CreateReservationAndLockSpot(gomock.Any(), gomock.Any()).Return(validCreatedReservation(), nil)
+	// ReleaseSpotLock returns an error — should only warn, not fail the request
+	repo.EXPECT().ReleaseSpotLock(gomock.Any(), testSpotID).
+		Return(apperror.New("redis_error", "failed to release spot lock"))
+
+	pc := mockpaymentclient.NewMockPaymentService(ctrl)
+	pc.EXPECT().CreatePayment(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&paymentclient.CreatePaymentResult{
+			PaymentID: "stub-payment-id",
+			QRCodeURL: "https://qr.example.com/stub",
+		}, nil)
+
+	uc := &ReservationUsecase{repo: repo, paymentClient: pc}
+	res, appErr := uc.CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+
+	// Request must still succeed despite the lock release warning
+	require.Nil(t, appErr)
+	assert.Equal(t, testReservationID, res.ReservationID)
+}
+
+// ── resolveSystemAssignedSpot — AcquireSpotLock error ────────────────────────
+
+func TestCreateReservation_SystemAssigned_LockAcquireError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := mockreservation.NewMockReservationRepository(ctrl)
+	repo.EXPECT().GetByIdempotencyKey(gomock.Any(), testIdempotencyKey).Return(nil, nil)
+	repo.EXPECT().HasActiveReservation(gomock.Any(), testDriverID).Return(false, nil)
+	repo.EXPECT().GetAvailableSpot(gomock.Any(), model.VehicleTypeCar).Return(validSpot(), nil)
+	repo.EXPECT().AcquireSpotLock(gomock.Any(), testSpotID, testDriverID).
+		Return(false, apperror.New("redis_error", "failed to acquire spot lock"))
+
+	_, appErr := newUsecase(repo, ctrl).CreateReservation(context.Background(), baseRequest(model.AssignmentModeSystemAssigned))
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "redis_error", appErr.ErrorCode)
+}
+
 func TestCreateReservation_SystemAssigned_Motorcycle_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
