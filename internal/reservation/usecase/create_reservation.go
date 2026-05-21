@@ -8,6 +8,8 @@ import (
 	"parkir-pintar/services/reservation/internal/reservation/model"
 	"parkir-pintar/services/reservation/pkg/apperror"
 	"parkir-pintar/services/reservation/pkg/logger"
+
+	"github.com/google/uuid"
 )
 
 const bookingFeeIDR int64 = 5000
@@ -38,10 +40,12 @@ func (u *ReservationUsecase) CreateReservation(ctx context.Context, req model.Cr
 		return nil, appErr
 	}
 
+	reservationID := uuid.New().String()
+
 	// Call Payment Service to create QRIS booking fee payment
 	paymentResult, appErr := u.paymentClient.CreatePayment(ctx,
 		req.IdempotencyKey,
-		"",
+		reservationID,
 		req.DriverID,
 		paymentpb.PaymentType_PAYMENT_TYPE_BOOKING_FEE,
 		bookingFeeIDR,
@@ -60,6 +64,7 @@ func (u *ReservationUsecase) CreateReservation(ctx context.Context, req model.Cr
 
 	// INSERT reservation + UPDATE spot=LOCKED in a single DB transaction
 	reservation := &model.Reservation{
+		ID:             reservationID,
 		IdempotencyKey: req.IdempotencyKey,
 		DriverID:       req.DriverID,
 		SpotID:         spot.ID,

@@ -14,4 +14,8 @@ COPY --from=alpine /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=alpine /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=alpine /etc/passwd /etc/passwd
 COPY --from=golang /app/bin/reservation /app/reservation
+
+RUN adduser -S appuser && chown -R appuser /app
+USER appuser
+
 ENTRYPOINT ["./reservation"]

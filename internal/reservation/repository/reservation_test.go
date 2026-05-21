@@ -232,14 +232,16 @@ func TestCreateReservationAndLockSpot_Success(t *testing.T) {
 	db.ExpectBegin()
 	db.ExpectQuery(`INSERT INTO reservations`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at"}).AddRow(testReservationID, now))
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"created_at"}).AddRow(now))
 	db.ExpectExec(`UPDATE spots`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	db.ExpectCommit()
 
 	created, appErr := repo.CreateReservationAndLockSpot(context.Background(), &model.Reservation{
+		ID:             testReservationID,
 		IdempotencyKey: testIdemKey,
 		DriverID:       testDriverID,
 		SpotID:         testSpotID,
@@ -260,11 +262,13 @@ func TestCreateReservationAndLockSpot_InsertFails(t *testing.T) {
 	db.ExpectBegin()
 	db.ExpectQuery(`INSERT INTO reservations`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(fmt.Errorf("duplicate key"))
 	db.ExpectRollback()
 
 	_, appErr := repo.CreateReservationAndLockSpot(context.Background(), &model.Reservation{
+		ID:             testReservationID,
 		IdempotencyKey: testIdemKey,
 		DriverID:       testDriverID,
 		SpotID:         testSpotID,
@@ -284,14 +288,16 @@ func TestCreateReservationAndLockSpot_UpdateFails(t *testing.T) {
 	db.ExpectBegin()
 	db.ExpectQuery(`INSERT INTO reservations`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at"}).AddRow(testReservationID, now))
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"created_at"}).AddRow(now))
 	db.ExpectExec(`UPDATE spots`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(fmt.Errorf("update failed"))
 	db.ExpectRollback()
 
 	_, appErr := repo.CreateReservationAndLockSpot(context.Background(), &model.Reservation{
+		ID:             testReservationID,
 		IdempotencyKey: testIdemKey,
 		DriverID:       testDriverID,
 		SpotID:         testSpotID,
@@ -458,14 +464,16 @@ func TestCreateReservationAndLockSpot_CommitFails(t *testing.T) {
 	db.ExpectBegin()
 	db.ExpectQuery(`INSERT INTO reservations`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at"}).AddRow(testReservationID, now))
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"created_at"}).AddRow(now))
 	db.ExpectExec(`UPDATE spots`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	db.ExpectCommit().WillReturnError(fmt.Errorf("commit failed"))
 
 	_, appErr := repo.CreateReservationAndLockSpot(context.Background(), &model.Reservation{
+		ID:             testReservationID,
 		IdempotencyKey: testIdemKey,
 		DriverID:       testDriverID,
 		SpotID:         testSpotID,

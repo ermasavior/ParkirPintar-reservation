@@ -155,11 +155,12 @@ func (r *ReservationRepository) CreateReservationAndLockSpot(ctx context.Context
 	}()
 
 	insertQuery := `INSERT INTO reservations
-	  (idempotency_key, driver_id, spot_id, vehicle_type, assignment_mode, status, qr_code_url, created_at)
-	  VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-	  RETURNING id, created_at`
+	  (id, idempotency_key, driver_id, spot_id, vehicle_type, assignment_mode, status, qr_code_url, created_at)
+	  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+	  RETURNING created_at`
 
 	err = tx.QueryRow(ctx, insertQuery,
+		reservation.ID,
 		reservation.IdempotencyKey,
 		reservation.DriverID,
 		reservation.SpotID,
@@ -167,7 +168,7 @@ func (r *ReservationRepository) CreateReservationAndLockSpot(ctx context.Context
 		reservation.AssignmentMode,
 		model.ReservationStatusPendingPayment,
 		reservation.QRCodeURL,
-	).Scan(&reservation.ID, &reservation.CreatedAt)
+	).Scan(&reservation.CreatedAt)
 	if err != nil {
 		logger.Error(ctx, "CreateReservationAndLockSpot: insert reservation failed", slog.String("error", err.Error()))
 		return nil, apperror.New("db_error", "failed to insert reservation")
