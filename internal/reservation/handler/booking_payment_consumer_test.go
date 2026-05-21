@@ -131,16 +131,46 @@ func TestBookingHandle_DBError_Naks(t *testing.T) {
 	consumer.handle(msg)
 }
 
-// ── newBookingConsumer — verify usecase type ──────────────────────────────────
+// ── NewBookingPaymentConsumer ─────────────────────────────────────────────────
 
 func TestNewBookingPaymentConsumer_CreatesConsumer(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	uc := mockreservation.NewMockReservationUsecase(ctrl)
-	c := newBookingConsumer(uc)
+	c := NewBookingPaymentConsumer(nil, uc)
 
 	assert.NotNil(t, c)
 	assert.Nil(t, c.nc)
 	assert.Nil(t, c.sub)
+	assert.NotNil(t, c.uc)
+}
+
+// ── Stop ──────────────────────────────────────────────────────────────────────
+
+func TestStop_NilSubscription_DoesNotPanic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
+	c := NewBookingPaymentConsumer(nil, uc)
+	// sub is nil — Stop must be a no-op
+
+	assert.NotPanics(t, func() { c.Stop() })
+}
+
+func TestStop_WithSubscription_Unsubscribes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	uc := mockreservation.NewMockReservationUsecase(ctrl)
+	c := NewBookingPaymentConsumer(nil, uc)
+	// Inject a non-nil subscription so the Unsubscribe branch is exercised.
+	// nats.Subscription.Unsubscribe on a zero-value struct returns an error
+	// which Stop discards — no panic expected.
+	c.sub = &nats.Subscription{}
+
+	assert.NotPanics(t, func() { c.Stop() })
+	// After Stop the subscription field is unchanged (Stop doesn't nil it),
+	// but the Unsubscribe path was exercised.
 }

@@ -688,6 +688,24 @@ func TestGetExpiredReservations_DBError(t *testing.T) {
 	assert.NoError(t, db.ExpectationsWereMet())
 }
 
+func TestGetExpiredReservations_RowsError(t *testing.T) {
+	db, _, repo := newMocks(t)
+
+	rows := pgxmock.NewRows([]string{"id", "driver_id", "spot_id"}).
+		AddRow("aaa00000-e29b-41d4-a716-446655440001", testDriverID, testSpotID).
+		RowError(0, fmt.Errorf("row iteration error"))
+
+	db.ExpectQuery(`SELECT id`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(rows)
+
+	_, appErr := repo.GetExpiredReservations(context.Background())
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, "db_error", appErr.ErrorCode)
+	assert.NoError(t, db.ExpectationsWereMet())
+}
+
 // ── ExpireReservationAndReleaseSpot ──────────────────────────────────────────
 
 func TestExpireReservationAndReleaseSpot_Success(t *testing.T) {
