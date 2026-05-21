@@ -14,13 +14,19 @@ import (
 )
 
 const (
-	schedulerInterval      = 30 * time.Second
+	schedulerInterval         = 30 * time.Second
 	subjectReservationExpired = "reservation.expired"
 )
 
+// natsPublisher is a narrow interface over *nats.Conn so publishExpired
+// can be tested without a live NATS connection.
+type natsPublisher interface {
+	Publish(subject string, data []byte) error
+}
+
 type ExpiryScheduler struct {
 	repo repository.Reservation
-	nc   *nats.Conn
+	nc   natsPublisher
 	stop chan struct{}
 }
 
