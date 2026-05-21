@@ -14,11 +14,21 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+type bookingConsumer interface {
+	Start() error
+	Stop()
+}
+
+type expiryScheduler interface {
+	Start()
+	Stop()
+}
+
 type Service struct {
 	repo            repository.Reservation
 	uc              usecase.Reservation
-	bookingConsumer *handler.BookingPaymentConsumer
-	expiryScheduler *handler.ExpiryScheduler
+	bookingConsumer bookingConsumer
+	expiryScheduler expiryScheduler
 }
 
 func New(db *pgxpool.Pool, redisClient *redis.Client, nc *nats.Conn, pc paymentclient.PaymentService) *Service {

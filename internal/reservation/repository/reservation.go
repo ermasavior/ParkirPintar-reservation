@@ -17,6 +17,11 @@ import (
 const spotLockTTL = 30 * time.Second
 const spotLockKeyPrefix = "lock:spot:"
 
+const (
+	errMsgBeginTransaction  = "failed to begin transaction"
+	errMsgCommitTransaction = "failed to commit transaction"
+)
+
 // GetByIdempotencyKey returns an existing reservation by idempotency key
 func (r *ReservationRepository) GetByIdempotencyKey(ctx context.Context, key string) (*model.Reservation, *apperror.AppError) {
 	query := `SELECT r.id, r.spot_id, r.status, r.qr_code_url,
@@ -146,7 +151,7 @@ func (r *ReservationRepository) CreateReservationAndLockSpot(ctx context.Context
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		logger.Error(ctx, "CreateReservationAndLockSpot: begin tx failed", slog.String("error", err.Error()))
-		return nil, apperror.New("db_error", "failed to begin transaction")
+		return nil, apperror.New("db_error", errMsgBeginTransaction)
 	}
 	defer func() {
 		if err != nil {
@@ -185,7 +190,7 @@ func (r *ReservationRepository) CreateReservationAndLockSpot(ctx context.Context
 
 	if err = tx.Commit(ctx); err != nil {
 		logger.Error(ctx, "CreateReservationAndLockSpot: commit failed", slog.String("error", err.Error()))
-		return nil, apperror.New("db_error", "failed to commit transaction")
+		return nil, apperror.New("db_error", errMsgCommitTransaction)
 	}
 
 	reservation.Status = model.ReservationStatusPendingPayment
@@ -230,10 +235,19 @@ func (r *ReservationRepository) ConfirmReservation(ctx context.Context, reservat
 
 // CancelReservationAndReleaseSpot atomically sets reservation=CANCELLED and spot=AVAILABLE
 func (r *ReservationRepository) CancelReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError {
+	return r.updateReservationStatusAndReleaseSpot(ctx, "CancelReservationAndReleaseSpot", reservationID, spotID, model.ReservationStatusCancelled)
+}
+
+// ExpireReservationAndReleaseSpot atomically sets reservation=EXPIRED and spot=AVAILABLE
+func (r *ReservationRepository) ExpireReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError {
+	return r.updateReservationStatusAndReleaseSpot(ctx, "ExpireReservationAndReleaseSpot", reservationID, spotID, model.ReservationStatusExpired)
+}
+
+func (r *ReservationRepository) updateReservationStatusAndReleaseSpot(ctx context.Context, caller, reservationID, spotID string, status model.ReservationStatus) *apperror.AppError {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		logger.Error(ctx, "CancelReservationAndReleaseSpot: begin tx failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to begin transaction")
+		logger.Error(ctx, caller+": begin tx failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", errMsgBeginTransaction)
 	}
 	defer func() {
 		if err != nil {
@@ -243,11 +257,14 @@ func (r *ReservationRepository) CancelReservationAndReleaseSpot(ctx context.Cont
 
 	_, err = tx.Exec(ctx,
 		`UPDATE reservations SET status = $1 WHERE id = $2`,
-		model.ReservationStatusCancelled, reservationID,
+		status, reservationID,
 	)
 	if err != nil {
-		logger.Error(ctx, "CancelReservationAndReleaseSpot: cancel reservation failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to cancel reservation")
+		logger.Error(ctx, caller+": update reservation failed",
+			slog.String("error", err.Error()),
+			slog.String("reservation_id", reservationID),
+		)
+		return apperror.New("db_error", "failed to update reservation status")
 	}
 
 	_, err = tx.Exec(ctx,
@@ -255,13 +272,16 @@ func (r *ReservationRepository) CancelReservationAndReleaseSpot(ctx context.Cont
 		model.SpotStatusAvailable, spotID,
 	)
 	if err != nil {
-		logger.Error(ctx, "CancelReservationAndReleaseSpot: release spot failed", slog.String("error", err.Error()))
+		logger.Error(ctx, caller+": release spot failed",
+			slog.String("error", err.Error()),
+			slog.String("spot_id", spotID),
+		)
 		return apperror.New("db_error", "failed to release spot")
 	}
 
 	if err = tx.Commit(ctx); err != nil {
-		logger.Error(ctx, "CancelReservationAndReleaseSpot: commit failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to commit transaction")
+		logger.Error(ctx, caller+": commit failed", slog.String("error", err.Error()))
+		return apperror.New("db_error", errMsgCommitTransaction)
 	}
 
 	return nil
@@ -294,43 +314,4 @@ func (r *ReservationRepository) GetExpiredReservations(ctx context.Context) ([]m
 	}
 
 	return reservations, nil
-}
-
-// ExpireReservationAndReleaseSpot atomically sets reservation=EXPIRED and spot=AVAILABLE
-func (r *ReservationRepository) ExpireReservationAndReleaseSpot(ctx context.Context, reservationID, spotID string) *apperror.AppError {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		logger.Error(ctx, "ExpireReservationAndReleaseSpot: begin tx failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to begin transaction")
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-
-	_, err = tx.Exec(ctx,
-		`UPDATE reservations SET status = $1 WHERE id = $2`,
-		model.ReservationStatusExpired, reservationID,
-	)
-	if err != nil {
-		logger.Error(ctx, "ExpireReservationAndReleaseSpot: expire reservation failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to expire reservation")
-	}
-
-	_, err = tx.Exec(ctx,
-		`UPDATE spots SET status = $1 WHERE id = $2`,
-		model.SpotStatusAvailable, spotID,
-	)
-	if err != nil {
-		logger.Error(ctx, "ExpireReservationAndReleaseSpot: release spot failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to release spot")
-	}
-
-	if err = tx.Commit(ctx); err != nil {
-		logger.Error(ctx, "ExpireReservationAndReleaseSpot: commit failed", slog.String("error", err.Error()))
-		return apperror.New("db_error", "failed to commit transaction")
-	}
-
-	return nil
 }
