@@ -2,8 +2,9 @@ package config
 
 // LogConfig holds configuration for the logger.
 type LogConfig struct {
-	Level  string // e.g., "info", "debug", "error"
-	Format string // e.g., "text", "json"
+	Level       string // e.g., "info", "debug", "error"
+	Format      string // e.g., "text", "json"
+	ServiceName string // used as OTel logger instrumentation scope name
 }
 
 // OTELConfig holds configuration for OpenTelemetry exporters and resources.

@@ -29,8 +29,9 @@ func main() {
 
 	cfg := config.Config{
 		Log: config.LogConfig{
-			Level:  dotenv.GetEnv("LOG_LEVEL", "info"),
-			Format: dotenv.GetEnv("LOG_FORMAT", "json"),
+			Level:       dotenv.GetEnv("LOG_LEVEL", "info"),
+			Format:      dotenv.GetEnv("LOG_FORMAT", "json"),
+			ServiceName: dotenv.GetEnv("APP_NAME", "reservation-service"),
 		},
 		OTEL: config.OTELConfig{
 			ServiceName: dotenv.GetEnv("APP_NAME", "reservation-service"),
@@ -38,9 +39,9 @@ func main() {
 			Insecure:    true,
 		},
 	}
-	logger.SetupLogger(cfg.Log)
 
 	otel := pkgOtel.NewOpenTelemetry(cfg.OTEL.Endpoint, cfg.OTEL.ServiceName, dotenv.GetEnv("APP_ENV", "local"))
+	logger.SetupLogger(cfg.Log, otel.LoggerProvider)
 
 	ctx := context.Background()
 

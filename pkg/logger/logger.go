@@ -10,6 +10,8 @@ import (
 
 	"parkir-pintar/services/reservation/pkg/config"
 	pkgContext "parkir-pintar/services/reservation/pkg/context"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -17,8 +19,47 @@ var (
 	Logger = slog.Default()
 )
 
+type multiHandler struct {
+	handlers []slog.Handler
+}
+
+func (m *multiHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, l) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *multiHandler) Handle(ctx context.Context, r slog.Record) error {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, r.Level) {
+			_ = h.Handle(ctx, r.Clone())
+		}
+	}
+	return nil
+}
+
+func (m *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	hs := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		hs[i] = h.WithAttrs(attrs)
+	}
+	return &multiHandler{hs}
+}
+
+func (m *multiHandler) WithGroup(name string) slog.Handler {
+	hs := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		hs[i] = h.WithGroup(name)
+	}
+	return &multiHandler{hs}
+}
+
 // SetupLogger initializes the slog logger with options from config.
-func SetupLogger(cfg config.LogConfig) *slog.Logger {
+// If lp is non-nil, logs are also forwarded to the OTel log pipeline (New Relic).
+func SetupLogger(cfg config.LogConfig, lp *log.LoggerProvider) *slog.Logger {
 	var level slog.Level
 	switch strings.ToLower(cfg.Level) {
 	case "debug":
@@ -43,12 +84,23 @@ func SetupLogger(cfg config.LogConfig) *slog.Logger {
 		return a
 	}
 
-	var handler slog.Handler
+	var stdoutHandler slog.Handler
 	if strings.ToLower(cfg.Format) == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: replaceAttr})
+		stdoutHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: replaceAttr})
 	} else {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: replaceAttr})
+		stdoutHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: replaceAttr})
 	}
+
+	var handler slog.Handler
+	if lp != nil {
+		otelHandler := otelslog.NewHandler(cfg.ServiceName,
+			otelslog.WithLoggerProvider(lp),
+		)
+		handler = &multiHandler{handlers: []slog.Handler{stdoutHandler, otelHandler}}
+	} else {
+		handler = stdoutHandler
+	}
+
 	Logger = slog.New(handler)
 	slog.SetDefault(Logger)
 	return Logger

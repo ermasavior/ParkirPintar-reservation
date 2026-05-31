@@ -47,9 +47,10 @@ func NewOpenTelemetry(serviceHost, serviceName, appEnv string) *OpenTelemetry {
 	logger := lp.Logger(serviceName)
 
 	return &OpenTelemetry{
-		Tracer: tracer,
-		Meter:  meter,
-		Logger: logger,
+		Tracer:         tracer,
+		Meter:          meter,
+		Logger:         logger,
+		LoggerProvider: lp,
 	}
 }
 

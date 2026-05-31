@@ -64,31 +64,31 @@ func TestContextAttrsWithEmptyContext(t *testing.T) {
 func TestSetupLogger(t *testing.T) {
 	t.Run("sets up JSON handler", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "info", Format: "json"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 
 	t.Run("sets up text handler", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "debug", Format: "text"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 
 	t.Run("sets up text handler", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "warn", Format: "text"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 
 	t.Run("defaults to info level", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "unknown", Format: "json"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 
 	t.Run("sets up error level", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "error", Format: "json"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 }
@@ -212,20 +212,20 @@ func TestLogWithAdditionalArgs(t *testing.T) {
 func TestSetupLogger_WarnLevel(t *testing.T) {
 	t.Run("warn string sets warn level", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "warn", Format: "json"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 
 	t.Run("warning string sets warn level", func(t *testing.T) {
 		cfg := config.LogConfig{Level: "warning", Format: "json"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		assert.NotNil(t, l)
 	})
 
 	t.Run("warn level suppresses debug and info", func(t *testing.T) {
 		var buf bytes.Buffer
 		cfg := config.LogConfig{Level: "warn", Format: "json"}
-		l := SetupLogger(cfg)
+		l := SetupLogger(cfg, nil)
 		// redirect output to buf for assertion
 		handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
 		SetLogger(slog.New(handler))
@@ -255,7 +255,7 @@ func captureSetupLogger(t *testing.T, level, format string, fn func()) string {
 	origStdout := os.Stdout
 	os.Stdout = w
 
-	SetupLogger(config.LogConfig{Level: level, Format: format})
+	SetupLogger(config.LogConfig{Level: level, Format: format}, nil)
 	fn()
 
 	os.Stdout = origStdout
